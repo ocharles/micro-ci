@@ -14,10 +14,12 @@ maintainer:          ollie@ocharles.org.uk
 build-type:          Simple
 extra-source-files:  ChangeLog.md
 cabal-version:       >=1.10
+data-files: jobs.nix
 
 executable micro-ci
   main-is:             MicroCI.hs
-  -- other-modules:       
+  autogen-modules: Paths_micro_ci
+  other-modules: Paths_micro_ci
   other-extensions:    DataKinds, TypeApplications
   build-depends:       base >=4.9 && <4.10, servant-server >=0.11 && <0.12, servant-github-webhook >=0.3 && <0.4, warp >=3.2 && <3.3, aeson, github, process, directory, text, filepath, dhall, stm
   -- hs-source-dirs:      
