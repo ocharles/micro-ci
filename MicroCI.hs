@@ -6,6 +6,7 @@
 
 module Main where
 
+import Paths_micro_ci
 import qualified Config
 import Config (Config)
 import Control.Applicative
@@ -119,6 +120,9 @@ buildAttribute config repo path = do
 
 findJobAttrPaths :: Config -> Repo -> IO [AttrPath]
 findJobAttrPaths config repo = do
+  jobsNixPath <-
+    getDataFileName "jobs.nix"
+    
   (exitCode, jobs, stderr) <-
     readCreateProcessWithExitCode
       (inGitRepository config repo
@@ -128,7 +132,7 @@ findJobAttrPaths config repo = do
             , "--strict"
             , "--json"
             , "-E"
-            , "import /home/ollie/work/micro-ci/test-repo/jobs.nix (import ./ci.nix)"
+            , "import " ++ jobsNixPath ++ " (import ./ci.nix)"
             ]))
       ""
 
