@@ -10,6 +10,8 @@ other systems. In particular, this continuous integration server
 This project is in its infancy, but if you'd like to play along at
 home, here's how.
 
+![Example](./example.png)
+
 ## Getting Started
 
 1. **Get an OAuth token.**
