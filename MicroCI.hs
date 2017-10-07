@@ -56,6 +56,13 @@ doJob config job = do
   buildRes <-
     buildAttribute config (jobRepo job) (jobAttr job)
 
+  case buildRes of
+    Left e ->
+      putStrLn e
+
+    Right _ ->
+      return ()
+
   createStatus
     (OAuth (fromString $ LT.unpack $ Config.oauth config))
     (simpleOwnerLogin $ repoOwner (jobRepo job))
@@ -75,8 +82,8 @@ doJob config job = do
                     Right{}->
                       "Evaluation successful"
 
-                    Left {} ->
-                      "Evalulation failed"
+                    Left e ->
+                      fromString e
               , newStatusContext =
                   "ci.nix: " <> fromString (encodeAttrPath (jobAttr job))
               }
@@ -103,7 +110,7 @@ buildAttribute config repo path = do
       return (Right ())
 
     ExitFailure{} ->
-      return (Left stdout)
+      return (Left $ stdout ++ stderr) 
     
 
 
