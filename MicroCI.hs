@@ -7,6 +7,7 @@
 module Main where
 
 import Paths_micro_ci
+
 import qualified Config
 import Config (Config)
 import Control.Applicative
@@ -25,6 +26,7 @@ import Data.String
 import qualified Data.Text as Text
 import qualified Data.Text.Lazy as LT
 import qualified Data.Text.Lazy.IO as LT
+import Data.Traversable
 import qualified Dhall
 import GitHub.Data
 import GitHub.Endpoints.Repos.Status
@@ -94,17 +96,17 @@ data BuildResult = BuildResult
 
 buildAttribute :: Config -> Repo -> AttrPath -> IO BuildResult
 buildAttribute config repo path = do
-  (exitCode, stdout, stderr) <-
-    readCreateProcessWithExitCode
-      (inGitRepository config repo
-         (Process.proc "nix-instantiate"
-            ["ci.nix"
-            , "-A"
-            , encodeAttrPath path
-            ]))
-      ""
+  drv <- do
+    (exitCode, stdout, stderr) <-
+      readCreateProcessWithExitCode
+        (inGitRepository config repo
+           (Process.proc "nix-instantiate"
+              ["ci.nix"
+              , "-A"
+              , encodeAttrPath path
+              ]))
+        ""
 
-  drv <-
     case lines stdout of
       [drv] ->
         return drv
@@ -116,33 +118,43 @@ buildAttribute config repo path = do
         , stdout
         , stderr
         ]
-  
-  (exitCode, stdout, stderr) <-
-    readCreateProcessWithExitCode
-      (inGitRepository config repo
-         (Process.proc "nix-store" [ "--realise", drv ]))
-      ""
+
+  steps <- do 
+    (exitCode, stdout, stderr) <-
+      readCreateProcessWithExitCode
+        (Process.proc "nix-store" [ "-qR", drv ])
+        ""
+
+    when (exitCode /= ExitSuccess)
+      (fail stderr)
+
+    return (lines stdout)
 
   createDirectoryIfMissing
     True
     (LT.unpack $ Config.logs config)
 
-  writeFile (LT.unpack (Config.logs config) </> takeFileName drv <.> "stdout") stdout
+  exitCodes <-
+    for steps $ \drv -> do
+      putStrLn $ "Realise " ++ drv
+    
+      (exitCode, stdout, stderr) <-
+        readCreateProcessWithExitCode
+          (inGitRepository config repo
+             (Process.proc "nix-store" [ "--realise", drv ]))
+          "" 
+  
+      writeFile (LT.unpack (Config.logs config) </> takeFileName drv <.> "stdout") stdout
+  
+      writeFile (LT.unpack (Config.logs config) </> takeFileName drv <.> "stderr") stderr
 
-  writeFile (LT.unpack (Config.logs config) </> takeFileName drv <.> "stderr") stderr
+      return exitCode
 
   return BuildResult
-    { buildSuccess =
-        case exitCode of
-          ExitSuccess ->
-            True
-
-          ExitFailure{} ->
-            False
+    { buildSuccess = all (== ExitSuccess) exitCodes
     , buildDerivation = drv
     }
 
-    
 
 
 -- findJobAttrPaths
