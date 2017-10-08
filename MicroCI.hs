@@ -57,13 +57,6 @@ doJob config job = do
   buildRes <-
     buildAttribute config (jobRepo job) (jobAttr job)
 
-  case buildRes of
-    Left e ->
-      putStrLn e
-
-    Right _ ->
-      return ()
-
   createStatus
     (OAuth (fromString $ LT.unpack $ Config.oauth config))
     (simpleOwnerLogin $ repoOwner (jobRepo job))
@@ -71,20 +64,19 @@ doJob config job = do
     (mkName (Proxy @Commit)
             (jobCommit job))
     NewStatus { newStatusState =
-                  case buildRes of
-                    Right{} ->
-                      Success
-
-                    Left{} ->
-                      Failure
-              , newStatusTargetUrl = Nothing
-              , newStatusDescription = Just $
-                  case buildRes of
-                    Right{}->
-                      "Evaluation successful"
-
-                    Left e ->
-                      fromString e
+                  if buildSuccess buildRes then
+                    Success
+                  else
+                    Failure
+              , newStatusTargetUrl =
+                  Just $ URL $ Text.pack $
+                  LT.unpack (Config.httpRoot config) ++ "/" ++ takeFileName (buildDerivation buildRes)
+              , newStatusDescription =
+                  Just $
+                  if buildSuccess buildRes then
+                    "nix-build successful"
+                  else
+                    "nix-build failed"
               , newStatusContext =
                   "ci.nix: " <> fromString (encodeAttrPath (jobAttr job))
               }
@@ -94,24 +86,62 @@ doJob config job = do
 
 -- buildAttribute
 
-buildAttribute :: Config -> Repo -> AttrPath -> IO (Either String ())
+data BuildResult = BuildResult
+  { buildSuccess :: Bool
+  , buildDerivation :: String
+  }
+
+
+buildAttribute :: Config -> Repo -> AttrPath -> IO BuildResult
 buildAttribute config repo path = do
   (exitCode, stdout, stderr) <-
     readCreateProcessWithExitCode
       (inGitRepository config repo
-         (Process.proc "nix-build"
+         (Process.proc "nix-instantiate"
             ["ci.nix"
             , "-A"
             , encodeAttrPath path
             ]))
       ""
 
-  case exitCode of
-    ExitSuccess ->
-      return (Right ())
+  drv <-
+    case lines stdout of
+      [drv] ->
+        return drv
 
-    ExitFailure{} ->
-      return (Left $ stdout ++ stderr) 
+      _ ->
+        fail $ unlines $
+        [ "Colud not find .drv from nix-instantiate ci.nix:"
+        , ""
+        , stdout
+        , stderr
+        ]
+  
+  (exitCode, stdout, stderr) <-
+    readCreateProcessWithExitCode
+      (inGitRepository config repo
+         (Process.proc "nix-store" [ "--realise", drv ]))
+      ""
+
+  createDirectoryIfMissing
+    True
+    (LT.unpack $ Config.logs config)
+
+  writeFile (LT.unpack (Config.logs config) </> takeFileName drv <.> "stdout") stdout
+
+  writeFile (LT.unpack (Config.logs config) </> takeFileName drv <.> "stderr") stderr
+
+  return BuildResult
+    { buildSuccess =
+        case exitCode of
+          ExitSuccess ->
+            True
+
+          ExitFailure{} ->
+            False
+    , buildDerivation = drv
+    }
+
     
 
 
@@ -231,11 +261,31 @@ type HttpApi =
     :> GitHubEvent '[ 'WebhookPullRequestEvent ]
     :> GitHubSignedReqBody '[JSON] PullRequestEvent
     :> Post '[JSON] ()
+  :<|>
+  Capture "drv" Text.Text
+    :> Get '[PlainText] Text.Text
 
 
-httpEndpoints :: TQueue PullRequestCommit -> Server HttpApi
-httpEndpoints =
-  gitHubWebHookHandler
+httpEndpoints :: TQueue PullRequestCommit -> Config -> Server HttpApi
+httpEndpoints q config =
+  gitHubWebHookHandler q :<|> detailsHandler config
+
+
+  
+-- detailsHandler
+
+
+detailsHandler :: Config-> Text.Text -> Handler Text.Text
+detailsHandler config drvName = do
+  stdout <-
+    liftIO
+      $ readFile (LT.unpack (Config.logs config) </> Text.unpack drvName <.> "stdout")
+
+  stderr <-
+    liftIO
+      $ readFile (LT.unpack (Config.logs config) </> Text.unpack drvName <.> "stderr")
+
+  return (Text.pack $ unlines [ stdout, "", stderr ])
 
 
 
@@ -327,4 +377,4 @@ main = do
     (serveWithContext
        (Proxy @HttpApi)
        (gitHubKey (return (fromString $ LT.unpack $ Config.secret config)) :. EmptyContext)
-       (httpEndpoints prQueue))
+       (httpEndpoints prQueue config))
