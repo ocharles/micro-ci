@@ -54,8 +54,8 @@ home, here's how.
 	On the machine that will run the builds, run
 	
 	```
-	nix-shell --pure --run 'ghc --make Setup.hs && ./Setup configure && ./Setup build'
-	./dist/build/micro-ci/micro-ci
+	nix-build ci.nix -A micro-ci
+	./result/bin/micro-ci
 	```
 
 5. **Add a `ci.nix` file to your project**.
